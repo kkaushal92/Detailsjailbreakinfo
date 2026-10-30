@@ -1,0 +1,91 @@
+sequenceDiagram
+    autonumber
+    actor U as User
+    participant A as Bank app<br/>(iOS / Android)
+    participant P as Passkey provider<br/>(iCloud Keychain / Google PM)
+    participant H as Secure hardware<br/>(Secure Enclave / Android Keystore)
+    participant S as Bank server<br/>(FIDO2 RP + binding service)
+
+    rect rgb(240, 242, 246)
+    Note over U,S: A. Start - user already signed in (password + OTP or V-Key)
+    U->>A: Turn on passkey login
+    A->>S: POST /passkey/register/options
+    S-->>A: WebAuthn options + bindingNonce (single-use, TTL max 120 s)
+    end
+
+    rect rgb(235, 238, 253)
+    Note over U,P: B. Key 1 - Passkey (synced, proves the user)
+    A->>P: Create passkey (AuthenticationServices / Credential Manager)
+    P->>U: Face ID / fingerprint / PIN (OS user verification)
+    P-->>A: Attestation - credentialId + passkey public key
+    end
+
+    rect rgb(252, 240, 225)
+    Note over A,H: C. Key 2 - Device key (device-only, no user prompt)
+    A->>H: Generate P-256 key, non-exportable, ThisDeviceOnly
+    H-->>A: devicePublicKey (+ Android key attestation chain)
+    A->>H: Sign bindingNonce + credentialId
+    H-->>A: deviceSignature (ECDSA-SHA256, DER)
+    opt App integrity (optional)
+        A->>A: App Attest (iOS) / Play Integrity (Android)
+    end
+    end
+
+    rect rgb(240, 242, 246)
+    Note over A,S: D. Register and bind
+    A->>S: POST /passkey/register (attestation + devicePublicKey + deviceSignature + platform)
+    S->>S: Verify passkey attestation
+    S->>S: Verify device signature (proof of possession), burn nonce
+    opt Attestation present (optional)
+        S->>S: Verify Android key chain / App Attest
+    end
+    S->>S: Store binding - userId, credentialId, devicePublicKey
+    S-->>A: Enrolled + bindingId
+    A->>U: Passkey login is on for this device
+    end
+
+sequenceDiagram
+    autonumber
+    actor U as User
+    participant A as Bank app<br/>(iOS / Android)
+    participant P as Passkey provider<br/>(iCloud Keychain / Google PM)
+    participant H as Secure hardware<br/>(Secure Enclave / Android Keystore)
+    participant S as Bank server<br/>(FIDO2 RP + binding service)
+
+    rect rgb(240, 242, 246)
+    Note over U,S: A. Challenge
+    U->>A: Sign in
+    A->>S: POST /passkey/auth/options (bindingId)
+    S-->>A: WebAuthn challenge + bindingNonce (single-use, tied to session)
+    end
+
+    rect rgb(235, 238, 253)
+    Note over U,P: B. Key 1 - Passkey
+    A->>P: Get passkey assertion
+    P->>U: Face ID / fingerprint / PIN (the only prompt the user sees)
+    P-->>A: Assertion - authenticatorData, clientDataJSON, signature, credentialId
+    end
+
+    rect rgb(252, 240, 225)
+    Note over A,H: C. Key 2 - Device key (no user prompt)
+    A->>H: Sign v1 + bindingNonce + challenge + credentialId + timestamp
+    H-->>A: deviceSignature
+    end
+
+    rect rgb(240, 242, 246)
+    Note over A,S: D. Verify both
+    A->>S: POST /passkey/auth (assertion + deviceSignature + bindingId)
+    S->>S: Verify passkey assertion (rpId, challenge, UV flag, signCount)
+    S->>S: Load binding for credentialId (status active, devicePublicKey)
+    S->>S: Verify device signature (rebuild payload), burn nonce
+    alt Both valid
+        S-->>A: Session tokens
+    else Device key missing or invalid
+        S-->>A: Reject - step-up (OTP / V-Key), then re-bind
+    end
+    end
+
+
+
+
+
